@@ -44,16 +44,13 @@ async def check_daily_commission(cookies: dict, webhook_url: str) -> None:
     notes = await client.get_zzz_notes(zzz_account.uid)
 
     engagement = notes.engagement  # デイリー任務(委托)の進捗ポイント
-    battery = notes.battery_charge  # バッテリー(スタミナ)
 
     print(f"デイリー任務: {engagement.current}/{engagement.max}")
-    print(f"バッテリー: {battery.current}/{battery.max}")
 
     if engagement.current < engagement.max:
         message = (
             f"📋 **本日のデイリー任務が未完了です**\n"
-            f"デイリー任務(委托): {engagement.current}/{engagement.max}\n"
-            f"バッテリー残量: {battery.current}/{battery.max}"
+            f"デイリー任務(委托): {engagement.current}/{engagement.max}"
         )
         send_discord_message(webhook_url, message)
         print("未完了だったので通知を送った。")
