@@ -51,7 +51,7 @@ async def check_daily_commission(cookies: dict, webhook_url: str) -> None:
 
     if engagement.current < engagement.max:
         message = (
-            f"⚠️ **ゼンゼロのデイリー任務がまだ終わってないよ**\n"
+            f"📋 **本日のデイリー任務が未完了です**\n"
             f"デイリー任務(委托): {engagement.current}/{engagement.max}\n"
             f"バッテリー残量: {battery.current}/{battery.max}"
         )
