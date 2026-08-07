@@ -31,7 +31,14 @@ async def check_daily_commission(cookies: dict, webhook_url: str) -> None:
 
     # HoYoLAB に紐づくゲームアカウント一覧から ZZZ のアカウントを探す
     accounts = await client.get_game_accounts()
-    zzz_account = next((a for a in accounts if a.game == genshin.types.Game.ZZZ), None)
+    zzz_accounts = [a for a in accounts if a.game == genshin.types.Game.ZZZ]
+
+    # DEBUG: 複数アカウントが紐づいていて誤ったUIDを見ていないか確認するための一時ログ
+    print(f"[DEBUG] ZZZ accounts found: {len(zzz_accounts)}")
+    for a in zzz_accounts:
+        print(f"[DEBUG]   uid={a.uid} nickname={a.nickname!r} level={a.level} server={a.server_name}")
+
+    zzz_account = zzz_accounts[0] if zzz_accounts else None
 
     if zzz_account is None:
         send_discord_message(
