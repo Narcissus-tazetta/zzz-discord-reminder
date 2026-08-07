@@ -26,27 +26,38 @@ def send_discord_message(webhook_url: str, content: str) -> None:
     resp.raise_for_status()
 
 
-async def check_daily_commission(cookies: dict, webhook_url: str) -> None:
+async def check_daily_commission(cookies: dict, webhook_url: str, target_uid: int | None) -> None:
     client = genshin.Client(cookies, lang="ja-jp", region=genshin.types.Region.OVERSEAS)
 
     # HoYoLAB に紐づくゲームアカウント一覧から ZZZ のアカウントを探す
     accounts = await client.get_game_accounts()
     zzz_accounts = [a for a in accounts if a.game == genshin.types.Game.ZZZ]
 
-    # DEBUG: 複数アカウントが紐づいていて誤ったUIDを見ていないか確認するための一時ログ
-    print(f"[DEBUG] ZZZ accounts found: {len(zzz_accounts)}")
-    for a in zzz_accounts:
-        print(f"[DEBUG]   uid={a.uid} nickname={a.nickname!r} level={a.level} server={a.server_name}")
-
-    zzz_account = zzz_accounts[0] if zzz_accounts else None
-
-    if zzz_account is None:
-        send_discord_message(
-            webhook_url,
-            "⚠️ HoYoLABアカウントにZZZ(ゼンレスゾーンゼロ)のキャラクターが見つからなかった。"
-            "Cookieやアカウント連携を確認して。",
-        )
-        sys.exit(1)
+    if target_uid is not None:
+        # UIDが明示されている場合はそれを優先(1つのHoYoLABアカウントに
+        # 複数のZZZキャラクターが紐づいていることがあるため)
+        zzz_account = next((a for a in zzz_accounts if a.uid == target_uid), None)
+        if zzz_account is None:
+            send_discord_message(
+                webhook_url,
+                f"⚠️ 指定されたUID({target_uid})のZZZキャラクターが見つからなかった。"
+                "ZZZ_TARGET_UID の設定かCookieを確認して。",
+            )
+            sys.exit(1)
+    else:
+        zzz_account = zzz_accounts[0] if zzz_accounts else None
+        if zzz_account is None:
+            send_discord_message(
+                webhook_url,
+                "⚠️ HoYoLABアカウントにZZZ(ゼンレスゾーンゼロ)のキャラクターが見つからなかった。"
+                "Cookieやアカウント連携を確認して。",
+            )
+            sys.exit(1)
+        if len(zzz_accounts) > 1:
+            print(
+                f"[WARN] ZZZアカウントが複数({len(zzz_accounts)}件)見つかったが、"
+                f"ZZZ_TARGET_UIDが未設定のため先頭(uid={zzz_account.uid})を使用する。"
+            )
 
     notes = await client.get_zzz_notes(zzz_account.uid)
 
@@ -80,8 +91,13 @@ async def main() -> None:
     if cookie_token_v2:
         cookies["cookie_token_v2"] = cookie_token_v2
 
+    # 任意: HoYoLABアカウントに複数のZZZキャラクターが紐づいている場合に
+    # チェック対象を固定するためのUID(未設定なら先頭のアカウントを使う)
+    target_uid_str = os.environ.get("ZZZ_TARGET_UID")
+    target_uid = int(target_uid_str) if target_uid_str else None
+
     try:
-        await check_daily_commission(cookies, webhook_url)
+        await check_daily_commission(cookies, webhook_url, target_uid)
     except Exception as exc:
         print(f"予期しないエラーが発生した: {exc}", file=sys.stderr)
         send_discord_message(
