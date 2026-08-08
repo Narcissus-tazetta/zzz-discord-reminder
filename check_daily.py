@@ -4,6 +4,8 @@ ZZZ(ゼンレスゾーンゼロ)の未消化コンテンツをチェックし、
 
 チェック対象は環境変数 ZZZ_CHECK_MODE で切り替える:
   - daily  : デイリー任務(委托)         … 毎日 23:30 JST 想定
+             ついでに式輿防衛戦・危局強襲戦のシーズン未着手チェックも行う
+             (リセットまで残り約1日以内になったら通知)
   - weekly : 0号ホロウの懸賞依頼(週間)  … 日曜 23:00 JST 想定(月曜5:00にリセット)
   - both   : 両方
 
@@ -22,6 +24,12 @@ import requests
 JST = datetime.timezone(datetime.timedelta(hours=9), "JST")
 
 VALID_MODES = ("daily", "weekly", "both")
+
+# 式輿防衛戦・危局強襲戦はリセット周期がゲーム側の運用次第(必ずしも毎週固定ではない)
+# なので、特定の曜日cronに頼らず「リセットまで残りこのくらいになったら通知する」
+# という形で判定する。毎日23:30JSTに実行されるdailyチェックに相乗りさせ、
+# シーズン終了直前の1回だけ捕まえられるように少し余裕を持たせている。
+CHALLENGE_REMINDER_WINDOW = datetime.timedelta(hours=26)
 
 
 def get_env_or_exit(name: str) -> str:
@@ -138,6 +146,84 @@ def build_weekly_message(notes) -> str | None:
     )
 
 
+def _remaining_within_reminder_window(end_time: datetime.datetime | None) -> datetime.timedelta | None:
+    """end_timeまでの残り時間を返す。リマインド対象外(未来すぎる/過去)ならNone。"""
+    if end_time is None:
+        return None
+    remaining = end_time.astimezone(JST) - datetime.datetime.now(JST)
+    if datetime.timedelta(0) <= remaining <= CHALLENGE_REMINDER_WINDOW:
+        return remaining
+    return None
+
+
+def _shiyu_attempted_this_season(shiyu) -> bool:
+    """今シーズン式輿防衛戦に挑戦済みかどうかを判定する。
+
+    get_shiyu_defense() は API のレスポンス形式次第で ShiyuDefenseV1
+    (has_data フィールドあり) と ShiyuDefenseV2 (has_data が無く、
+    代わりに brief_info の有無で判断する) のどちらかを返すため、
+    両対応させる必要がある。
+    """
+    has_data = getattr(shiyu, "has_data", None)
+    if has_data is not None:
+        return has_data
+    return getattr(shiyu, "brief_info", None) is not None
+
+
+async def build_shiyu_message(client: genshin.Client, uid: int) -> str | None:
+    """式輿防衛戦(Shiyu Defense)がシーズン内で未着手かつリセットが近ければメッセージを返す。
+
+    genshin.pyにはデイリー任務のような単純なcurrent/maxカウンタが無いため、
+    ここでは「このシーズン一度も挑戦していないか」だけを判定する
+    (部分的にしかクリアしていない場合は検知できない)。
+    """
+    try:
+        shiyu = await client.get_shiyu_defense(uid)
+    except Exception as exc:
+        print(f"[WARN] 式輿防衛戦の情報取得に失敗した: {exc}", file=sys.stderr)
+        return None
+
+    remaining = _remaining_within_reminder_window(shiyu.end_time)
+    if remaining is None:
+        return None
+
+    if _shiyu_attempted_this_season(shiyu):
+        print("式輿防衛戦は今シーズン挑戦済み。通知なし。")
+        return None
+
+    reset_at = shiyu.end_time.astimezone(JST)
+    return (
+        f"🏯 **式輿防衛戦が今シーズン未挑戦です**\n"
+        f"リセットまで: あと{format_timedelta(remaining)}({reset_at:%m/%d %H:%M} JST)"
+    )
+
+
+async def build_assault_message(client: genshin.Client, uid: int) -> str | None:
+    """危局強襲戦(Deadly Assault)がシーズン内で未着手かつリセットが近ければメッセージを返す。
+
+    build_shiyu_message同様、判定は「今シーズン一度も挑戦していないか」のみ。
+    """
+    try:
+        assault = await client.get_deadly_assault(uid)
+    except Exception as exc:
+        print(f"[WARN] 危局強襲戦の情報取得に失敗した: {exc}", file=sys.stderr)
+        return None
+
+    remaining = _remaining_within_reminder_window(assault.end_time)
+    if remaining is None:
+        return None
+
+    if assault.has_data:
+        print("危局強襲戦は今シーズン挑戦済み。通知なし。")
+        return None
+
+    reset_at = assault.end_time.astimezone(JST)
+    return (
+        f"⚔️ **危局強襲戦が今シーズン未挑戦です**\n"
+        f"リセットまで: あと{format_timedelta(remaining)}({reset_at:%m/%d %H:%M} JST)"
+    )
+
+
 async def run_checks(cookies: dict, webhook_url: str, target_uid: int | None, mode: str) -> None:
     client = genshin.Client(cookies, lang="ja-jp", region=genshin.types.Region.OVERSEAS)
 
@@ -147,6 +233,8 @@ async def run_checks(cookies: dict, webhook_url: str, target_uid: int | None, mo
     messages: list[str] = []
     if mode in ("daily", "both"):
         messages.append(build_daily_message(notes))
+        messages.append(await build_shiyu_message(client, zzz_account.uid))
+        messages.append(await build_assault_message(client, zzz_account.uid))
     if mode in ("weekly", "both"):
         messages.append(build_weekly_message(notes))
 
