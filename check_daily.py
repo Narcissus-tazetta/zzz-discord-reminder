@@ -3,9 +3,9 @@ ZZZ(ゼンレスゾーンゼロ)の未消化コンテンツをチェックし、
 未完了なら Discord Webhook に通知するスクリプト。
 
 チェック対象は環境変数 ZZZ_CHECK_MODE で切り替える:
-  - daily  : デイリー任務(委托)         … 毎日 23:30 JST 想定
+  - daily  : デイリー任務(委托)         … 毎日 23:30 JST・1:00 JST 想定
              ついでに式輿防衛戦・危局強襲戦のシーズン未着手チェックも行う
-             (リセットまで残り約1日以内になったら通知)
+             (リセットまで残り3日・1日を切ったタイミングで通知)
   - weekly : 0号ホロウの懸賞依頼(週間)  … 日曜 23:00 JST 想定(月曜5:00にリセット)
   - both   : 両方
 
@@ -27,9 +27,14 @@ VALID_MODES = ("daily", "weekly", "both")
 
 # 式輿防衛戦・危局強襲戦はリセット周期がゲーム側の運用次第(必ずしも毎週固定ではない)
 # なので、特定の曜日cronに頼らず「リセットまで残りこのくらいになったら通知する」
-# という形で判定する。毎日23:30JSTに実行されるdailyチェックに相乗りさせ、
-# シーズン終了直前の1回だけ捕まえられるように少し余裕を持たせている。
-CHALLENGE_REMINDER_WINDOW = datetime.timedelta(hours=26)
+# という形で判定する。毎日23:30JST・1:00JSTに実行されるdailyチェックに相乗りさせ、
+# 各チェックポイント(3日前・1日前)を1回ずつ確実に捕まえられるように、
+# cronの実行間隔(最大約22.5時間)より広い26時間の猶予を持たせている。
+CHALLENGE_REMINDER_CHECKPOINTS: tuple[tuple[datetime.timedelta, str], ...] = (
+    (datetime.timedelta(days=3), "3日前"),
+    (datetime.timedelta(days=1), "1日前"),
+)
+CHALLENGE_REMINDER_MARGIN = datetime.timedelta(hours=26)
 
 
 def get_env_or_exit(name: str) -> str:
@@ -146,13 +151,19 @@ def build_weekly_message(notes) -> str | None:
     )
 
 
-def _remaining_within_reminder_window(end_time: datetime.datetime | None) -> datetime.timedelta | None:
-    """end_timeまでの残り時間を返す。リマインド対象外(未来すぎる/過去)ならNone。"""
+def _reminder_checkpoint(
+    end_time: datetime.datetime | None,
+) -> tuple[datetime.timedelta, str] | None:
+    """end_timeまでの残り時間が、リマインドのチェックポイント(3日前・1日前)の
+    いずれかに該当すれば (残り時間, ラベル) を返す。該当しなければNone。
+    """
     if end_time is None:
         return None
     remaining = end_time.astimezone(JST) - datetime.datetime.now(JST)
-    if datetime.timedelta(0) <= remaining <= CHALLENGE_REMINDER_WINDOW:
-        return remaining
+    for checkpoint, label in CHALLENGE_REMINDER_CHECKPOINTS:
+        lower = max(checkpoint - CHALLENGE_REMINDER_MARGIN, datetime.timedelta(0))
+        if lower <= remaining <= checkpoint:
+            return remaining, label
     return None
 
 
@@ -183,9 +194,10 @@ async def build_shiyu_message(client: genshin.Client, uid: int) -> str | None:
         print(f"[WARN] 式輿防衛戦の情報取得に失敗した: {exc}", file=sys.stderr)
         return None
 
-    remaining = _remaining_within_reminder_window(shiyu.end_time)
-    if remaining is None:
+    checkpoint = _reminder_checkpoint(shiyu.end_time)
+    if checkpoint is None:
         return None
+    remaining, label = checkpoint
 
     if _shiyu_attempted_this_season(shiyu):
         print("式輿防衛戦は今シーズン挑戦済み。通知なし。")
@@ -193,7 +205,7 @@ async def build_shiyu_message(client: genshin.Client, uid: int) -> str | None:
 
     reset_at = shiyu.end_time.astimezone(JST)
     return (
-        f"🏯 **式輿防衛戦が今シーズン未挑戦です**\n"
+        f"🏯 **式輿防衛戦が今シーズン未挑戦です(リセット{label})**\n"
         f"リセットまで: あと{format_timedelta(remaining)}({reset_at:%m/%d %H:%M} JST)"
     )
 
@@ -209,9 +221,10 @@ async def build_assault_message(client: genshin.Client, uid: int) -> str | None:
         print(f"[WARN] 危局強襲戦の情報取得に失敗した: {exc}", file=sys.stderr)
         return None
 
-    remaining = _remaining_within_reminder_window(assault.end_time)
-    if remaining is None:
+    checkpoint = _reminder_checkpoint(assault.end_time)
+    if checkpoint is None:
         return None
+    remaining, label = checkpoint
 
     if assault.has_data:
         print("危局強襲戦は今シーズン挑戦済み。通知なし。")
@@ -219,7 +232,7 @@ async def build_assault_message(client: genshin.Client, uid: int) -> str | None:
 
     reset_at = assault.end_time.astimezone(JST)
     return (
-        f"⚔️ **危局強襲戦が今シーズン未挑戦です**\n"
+        f"⚔️ **危局強襲戦が今シーズン未挑戦です(リセット{label})**\n"
         f"リセットまで: あと{format_timedelta(remaining)}({reset_at:%m/%d %H:%M} JST)"
     )
 
