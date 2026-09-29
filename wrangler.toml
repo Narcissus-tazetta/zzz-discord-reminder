@@ -1,0 +1,13 @@
+name = "zzz-reminder"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+# UTC で指定する(JST = UTC + 9)。
+# 無料プランは cron トリガーがアカウント全体で5個までなので1個にまとめ、
+# 日曜の実行時だけ週間チェックも行う(src/index.ts 参照)。
+[triggers]
+crons = ["30 14 * * *"] # 毎日 23:30 JST
+
+[observability.logs]
+enabled = true

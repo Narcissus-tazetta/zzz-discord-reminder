@@ -1,7 +1,7 @@
 # ZZZ 任務リマインダー
 
 決まった時刻に、ゼンレスゾーンゼロ(ZZZ)の任務が終わってなければ
-Discord に通知するツール。GitHub Actions 上で動くので、
+Discord に通知するツール。Cloudflare Workers の Cron Triggers で動くので、
 自分のPCが起動してなくても動く。
 
 チェックするのは以下の4つ:
@@ -9,145 +9,85 @@ Discord に通知するツール。GitHub Actions 上で動くので、
 | 種類 | 内容 | 通知タイミング | リセット |
 |---|---|---|---|
 | デイリー | デイリー任務(委托) | 毎日 23:30 JST | 毎日 5:00 JST |
-| ウィークリー | 0号ホロウの懸賞依頼 | 日曜 23:00 JST | 月曜 5:00 JST |
+| ウィークリー | 0号ホロウの懸賞依頼 | 日曜 23:30 JST | 月曜 5:00 JST |
 | 式輿防衛戦 | シーズン内で未挑戦か | 毎日 23:30 JST(リセット3日前・1日前を切ったら) | シーズンごと(ゲーム側の運用に依存) |
 | 危局強襲戦 | シーズン内で未挑戦か | 毎日 23:30 JST(リセット3日前・1日前を切ったら) | シーズンごと(ゲーム側の運用に依存) |
 
 ## 仕組み
 
-- GitHub Actions が cron で起動して `check_daily.py` を実行
-- HoYoLAB の Cookie を使ってリアルタイムノートを取得
+- Cloudflare Workers が毎日 23:30 JST に起動する(cron は1つだけで、日曜の実行時にウィークリーも一緒にチェックする)
+- HoYoLAB の Cookie を使ってリアルタイムノート等を取得
 - 進捗が上限に達してなければ Discord Webhook に通知
-- 認証情報(Cookie)は GitHub Secrets に暗号化保存。リポジトリオーナー以外は見れない
+- 認証情報(Cookie)は Workers の Secrets に暗号化保存
 
 懸賞依頼の進捗はサーバー側で集計されるので、0号ホロウを自分で周回しても
 特派調査などの代替手段で消化しても、同じカウンタに加算される。
 このツールは達成手段を区別せず、進捗が上限に達しているかだけを見る。
 
-式輿防衛戦・危局強襲戦はデイリー任務のような単純なcurrent/maxカウンタが
+式輿防衛戦・危局強襲戦はデイリー任務のような単純な current/max カウンタが
 APIから取れないため、「このシーズン一度も挑戦していないか」だけを判定する
-(部分的にしかクリアしていない場合は検知できない)。また、リセット日がゲーム側の
-運用次第で固定されていないため、特定の曜日cronではなく「毎日23:30JSTの
-チェックで、リセットまで残り3日・1日を切ったかどうか」で判定している。これにより
-特定の曜日に依存せず、リセット3日前・1日前のタイミングでそれぞれ自動的に通知される。
+(部分的にしかクリアしていない場合は検知できない)。リセット日が固定されていないため、
+毎日のチェックで「リセットまで残り3日・1日を切ったか」を見て通知する。
 
-## セットアップ手順
+## セットアップ
 
-### 1. このリポジトリを **Private** で作る
-
-GitHubで新しいリポジトリを作成し、この中身(`check_daily.py`、
-`requirements.txt`、`.github/workflows/reminder.yml`)を配置する。
-**必ず Private に設定すること。**(公開してもSecretsの値自体は漏れないが、
-念のため)
-
-### 2. HoYoLABのCookieを取得する
+### 1. HoYoLABのCookieを取得する
 
 1. ブラウザで https://www.hoyolab.com にログイン(ZZZアカウントと同じログイン方法で)
-2. ログイン後、ブラウザのDevTools(F12など)を開く
-3. `Application`(Chrome)または`ストレージ`(Firefox)タブ → Cookies →
-   `https://www.hoyolab.com` を選択
+2. DevTools(F12など)を開く
+3. `Application`(Chrome)または`ストレージ`(Firefox)タブ → Cookies → `https://www.hoyolab.com`
 4. 以下の値をコピーしておく
    - `ltuid_v2`
    - `ltoken_v2`
-   - `cookie_token_v2` (あれば。無くても基本動くはずだが念のため取得推奨)
+   - `cookie_token_v2`(あれば)
 
-Cookieには有効期限がある。数週間〜数ヶ月で失効することがあるので、
-通知が来なくなったら再取得が必要(下記トラブルシューティング参照)。
+Cookieは数週間〜数ヶ月で失効することがある。失効するとエラー通知が Discord に届くので、再取得して Secrets を更新する。
 
-### 3. Discord Webhook URLを取得する
+### 2. Discord Webhook URLを取得する
 
-1. 通知を送りたいDiscordチャンネルの設定を開く
-2. 「連携サービス」→「ウェブフック」→「新しいウェブフック」
-3. 作成されたWebhook URLをコピー
+チャンネル設定 →「連携サービス」→「ウェブフック」→「新しいウェブフック」で作成し、URLをコピーする。
 
-### 4. GitHub Secretsに登録する
+### 3. デプロイと Secrets の登録
 
-リポジトリの `Settings` → `Secrets and variables` → `Actions` →
-`New repository secret` から、以下を1つずつ登録:
+```bash
+bun install
+bunx wrangler deploy
+bunx wrangler secret put LTUID_V2
+bunx wrangler secret put LTOKEN_V2
+bunx wrangler secret put COOKIE_TOKEN_V2       # 任意
+bunx wrangler secret put DISCORD_WEBHOOK_URL
+bunx wrangler secret put ZZZ_TARGET_UID        # 任意。1つのHoYoLABアカウントに複数のZZZキャラがいる場合に指定
+```
 
-| Name | 値 |
-|---|---|
-| `LTUID_V2` | 手順2で取得した値 |
-| `LTOKEN_V2` | 手順2で取得した値 |
-| `COOKIE_TOKEN_V2` | 手順2で取得した値(任意) |
-| `DISCORD_WEBHOOK_URL` | 手順3で取得した値 |
+## 動作確認
 
-### 5. 動作確認
+`.dev.vars` に Secrets と同じキーを書いて、ローカルで cron を手動発火できる。
 
-リポジトリの `Actions` タブ → `ZZZ Reminder` を選択 → `Run workflow` ボタンで
-手動実行できる。そのとき「チェック対象」を `both` / `daily` / `weekly` から選べる
-(デフォルトは `both`)。ログを見て、正しく進捗が取得できてるか確認する。
+```bash
+bun run dev
+curl "http://localhost:8787/__scheduled?cron=30+14+*+*+*"
+```
+
+本番の実行ログは Cloudflare ダッシュボードの Workers → `zzz-reminder` → Logs で見られる。
 
 ## 通知時刻を変更したいとき
 
-`.github/workflows/reminder.yml` の中の以下の行を編集する:
+`wrangler.toml` の `crons` を編集して `bunx wrangler deploy` する。**UTC で指定する**(JST = UTC + 9)。
 
-```yaml
-- cron: "30 14 * * *"   # デイリー
-- cron: "0 14 * * 0"    # ウィークリー(0号ホロウ)
-```
+- JST 23:30 → UTC 14:30 → `"30 14 * * *"`(デフォルト)
+- JST 21:00 → UTC 12:00 → `"0 12 * * *"`
 
-これは **UTC時刻** なので、日本時間(JST)にするには **UTCに9を足す**。
-例:
+ウィークリーは「実行時刻が JST で日曜かどうか」で判定しているので、日付をまたぐ時刻(JST 0:00〜8:59)に変えると日曜の判定がずれる点に注意。
 
-- JST 23:30に通知したい → UTC 14:30 → `cron: "30 14 * * *"` (デフォルト)
-- JST 21:00に通知したい → UTC 12:00 → `cron: "0 12 * * *"`
-- JST 7:00に通知したい(日付またぎ注意) → UTC前日22:00 → `cron: "0 22 * * *"`
-
-書式は `分 時 日 月 曜日`。曜日は `0`=日曜、`1`=月曜 … `6`=土曜。
-例えばウィークリーの `0 14 * * 0` は「日曜 14:00 UTC = 日曜 23:00 JST」。
-編集してコミットすれば次の実行から反映される。
-
-⚠️ ウィークリーの cron を変えるときは、`.github/workflows/reminder.yml` の
-`ZZZ_CHECK_MODE` の行にある cron 文字列も同じ値に直すこと。ここが一致していないと
-どちらの cron で起動したか判定できず、デイリーのチェックが走ってしまう。
-
-※ GitHub Actionsのscheduled実行は、混雑状況によって数分〜十数分遅れることがある。
-正確に秒単位で発火するわけではないので、その前提で運用すること。
+Cloudflare 無料プランは cron トリガーがアカウント全体で5個まで。
 
 ## トラブルシューティング
 
-### 通知が来ない/Actionsが失敗する
-
-`Actions` タブでワークフローの実行ログを確認する。よくある原因:
-
-- **Cookie失効**: `get_game_accounts` や `get_zzz_notes` でエラーが出る場合、
-  手順2をやり直してSecretsを更新する
-- **ZZZアカウントが見つからない**: HoYoLABアカウントにZZZのキャラクターが
-  紐づいているか確認する
-- **60日放置でcronが止まる**: GitHubの仕様で、60日間コミットが無いリポジトリは
-  scheduled workflow が自動で無効化される。`Actions` タブに再有効化のボタンが
-  出るので押すか、何かコミットしておく
-
 ### 「懸賞依頼の進捗が取得できなかった」と通知が来る
 
-ゲーム側のアップデートでAPIのレスポンスが変わった可能性がある。
-`pip install -U genshin` 相当で `requirements.txt` のバージョン指定を上げて
-様子を見る(それでも直らない場合はライブラリ側の対応待ち)。
+ゲーム側のアップデートで API のレスポンスが変わった可能性がある。
 
-### 式輿防衛戦・危局強襲戦の通知が来ない/実行ログに警告が出る
+### 式輿防衛戦・危局強襲戦の通知が来ない
 
-ログに `式輿防衛戦の情報取得に失敗した` / `危局強襲戦の情報取得に失敗した` と
-出る場合、該当コンテンツが未解放(冒険ランクが足りない等)か、ゲーム側の
-仕様変更でAPIレスポンスが変わった可能性がある。警告が出ても他のチェックは
-継続されるので、Cookie失効とは別問題として調べる。
-
-### 手元でテストしたい場合
-
-```bash
-pip install -r requirements.txt
-export LTUID_V2="..."
-export LTOKEN_V2="..."
-export DISCORD_WEBHOOK_URL="..."
-export ZZZ_CHECK_MODE="both"   # daily / weekly / both(未設定なら daily)
-python check_daily.py
-```
-
-## セキュリティについて
-
-- Cookieは GitHub Secrets に暗号化保存され、ワークフロー実行中のみ
-  環境変数として展開される。ログには自動でマスクされる
-- リポジトリを Private にしていれば、自分以外はコードにもSecretsにも
-  アクセスできない
-- 第三者のBotサービス(Hoyo Buddyなど)と違い、Cookieを渡す先は
-  「自分が管理するGitHubリポジトリ」のみ
+ログに `式輿防衛戦の情報取得に失敗した` / `危局強襲戦の情報取得に失敗した` と出る場合、
+コンテンツが未解放か、API の仕様変更の可能性がある。警告が出ても他のチェックは継続される。
