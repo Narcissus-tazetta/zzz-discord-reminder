@@ -7,7 +7,7 @@ workers_dev = false
 # 無料プランは cron トリガーがアカウント全体で5個までなので1個にまとめ、
 # 日曜の実行時だけ週間チェックも行う(src/index.ts 参照)。
 [triggers]
-crons = ["30 14 * * *"] # 毎日 23:30 JST
+crons = ["0 13 * * *"] # 毎日 22:00 JST
 
 [observability.logs]
 enabled = true

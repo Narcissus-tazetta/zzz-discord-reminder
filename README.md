@@ -8,14 +8,14 @@ Discord に通知するツール。Cloudflare Workers の Cron Triggers で動�
 
 | 種類 | 内容 | 通知タイミング | リセット |
 |---|---|---|---|
-| デイリー | デイリー任務(委托) | 毎日 23:30 JST | 毎日 5:00 JST |
-| ウィークリー | 0号ホロウの懸賞依頼 | 日曜 23:30 JST | 月曜 5:00 JST |
-| 式輿防衛戦 | シーズン内で未挑戦か | 毎日 23:30 JST(リセット3日前・1日前を切ったら) | シーズンごと(ゲーム側の運用に依存) |
-| 危局強襲戦 | シーズン内で未挑戦か | 毎日 23:30 JST(リセット3日前・1日前を切ったら) | シーズンごと(ゲーム側の運用に依存) |
+| デイリー | デイリー任務(委托) | 毎日 22:00 JST | 毎日 5:00 JST |
+| ウィークリー | 0号ホロウの懸賞依頼 | 日曜 22:00 JST | 月曜 5:00 JST |
+| 式輿防衛戦 | シーズン内で未挑戦か | 毎日 22:00 JST(リセット3日前・1日前を切ったら) | シーズンごと(ゲーム側の運用に依存) |
+| 危局強襲戦 | シーズン内で未挑戦か | 毎日 22:00 JST(リセット3日前・1日前を切ったら) | シーズンごと(ゲーム側の運用に依存) |
 
 ## 仕組み
 
-- Cloudflare Workers が毎日 23:30 JST に起動する(cron は1つだけで、日曜の実行時にウィークリーも一緒にチェックする)
+- Cloudflare Workers が毎日 22:00 JST に起動する(cron は1つだけで、日曜の実行時にウィークリーも一緒にチェックする)
 - HoYoLAB の Cookie を使ってリアルタイムノート等を取得
 - 進捗が上限に達してなければ Discord Webhook に通知
 - 認証情報(Cookie)は Workers の Secrets に暗号化保存
@@ -65,7 +65,7 @@ bunx wrangler secret put ZZZ_TARGET_UID        # 任意。1つのHoYoLABアカ�
 
 ```bash
 bun run dev
-curl "http://localhost:8787/__scheduled?cron=30+14+*+*+*"
+curl "http://localhost:8787/__scheduled?cron=0+13+*+*+*"
 ```
 
 本番の実行ログは Cloudflare ダッシュボードの Workers → `zzz-reminder` → Logs で見られる。
@@ -74,7 +74,7 @@ curl "http://localhost:8787/__scheduled?cron=30+14+*+*+*"
 
 `wrangler.toml` の `crons` を編集して `bunx wrangler deploy` する。**UTC で指定する**(JST = UTC + 9)。
 
-- JST 23:30 → UTC 14:30 → `"30 14 * * *"`(デフォルト)
+- JST 22:00 → UTC 13:00 → `"0 13 * * *"`(デフォルト)
 - JST 21:00 → UTC 12:00 → `"0 12 * * *"`
 
 ウィークリーは「実行時刻が JST で日曜かどうか」で判定しているので、日付をまたぐ時刻(JST 0:00〜8:59)に変えると日曜の判定がずれる点に注意。
