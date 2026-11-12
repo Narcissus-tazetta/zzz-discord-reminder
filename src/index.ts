@@ -12,7 +12,7 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const JST_OFFSET_HOURS = 9;
 
-// 式輿防衛戦・危局強襲戦のリセット周期はゲーム側の運用次第で曜日が固定されないため、
+// 式輿防衛戦・危局強襲戦・期間限定イベントの終了日はゲーム側の運用次第で曜日が固定されないため、
 // 毎日の daily チェックに相乗りして「リセットまで残り3日・1日を切ったか」で判定する。
 // cron 間隔(24時間)より広い26時間の猶予を持たせ、各チェックポイントを必ず1回は捕まえる。
 const CHALLENGE_REMINDER_CHECKPOINTS: ReadonlyArray<[number, string]> = [
@@ -52,6 +52,14 @@ type ShiyuResponse = {
 };
 
 type AssaultResponse = { end_time?: ServerDateTime | null; has_data: boolean };
+
+type ZZZEvent = {
+    state: "STATE_IN_PROGRESS" | "STATE_COMPLETED" | "STATE_NOT_START";
+    name: string;
+    monochrome_cnt: number;
+    monochrome_got_cnt: number;
+    end_ts: number;
+};
 
 class HoyolabClient {
     private readonly cookie: string;
@@ -237,6 +245,28 @@ async function buildAssaultMessage(client: HoyolabClient, uid: string): Promise<
     return buildChallengeMessage("⚔️", "危局強襲戦", serverDateTimeToDate(data.end_time, tzHours), data.has_data);
 }
 
+// 期間限定イベントは state が STATE_COMPLETED でも終了済みではなく「モノクロームを取り切った」状態を指す
+async function buildEventMessage(client: HoyolabClient, uid: string): Promise<string | null> {
+    const { server } = recognizeServer(uid);
+    const { activity_list } = await client.get<{ activity_list: ZZZEvent[] }>(`${ZZZ_RECORD_URL}/activity_calendar`, {
+        uid,
+        region: server,
+    });
+
+    const lines: string[] = [];
+    for (const event of activity_list) {
+        if (event.state !== "STATE_IN_PROGRESS" || event.monochrome_got_cnt >= event.monochrome_cnt) continue;
+        const endTime = new Date(event.end_ts * 1000);
+        const checkpoint = reminderCheckpoint(endTime);
+        if (!checkpoint) continue;
+        lines.push(
+            `・${event.name}: ${event.monochrome_got_cnt}/${event.monochrome_cnt}(終了${checkpoint.label}・あと${formatDuration(checkpoint.remainingMs)}・${formatJst(endTime)})`,
+        );
+    }
+    if (lines.length === 0) return null;
+    return `🎪 **期間限定イベントのモノクロームが未取得です**\n${lines.join("\n")}`;
+}
+
 // 未解放や API 仕様変更で取れなくても、デイリー任務の通知は止めたくない
 async function optional(name: string, fn: () => Promise<string | null>): Promise<string | null> {
     try {
@@ -259,6 +289,7 @@ async function runChecks(env: Env, modes: Mode[]): Promise<void> {
             buildDailyMessage(notes),
             await optional("式輿防衛戦", () => buildShiyuMessage(client, uid)),
             await optional("危局強襲戦", () => buildAssaultMessage(client, uid)),
+            await optional("期間限定イベント", () => buildEventMessage(client, uid)),
         );
     }
     if (modes.includes("weekly")) messages.push(buildWeeklyMessage(notes));
