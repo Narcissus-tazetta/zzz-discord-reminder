@@ -13,12 +13,11 @@ const DAY_MS = 24 * HOUR_MS;
 const JST_OFFSET_HOURS = 9;
 
 // 式輿防衛戦・危局強襲戦・期間限定イベントの終了日はゲーム側の運用次第で曜日が固定されないため、
-// 毎日の daily チェックに相乗りして「リセットまで残り3日・1日を切ったか」で判定する。
+// 毎日の daily チェックに相乗りして「リセットまで残り何日を切ったか」で判定する。
 // cron 間隔(24時間)より広い26時間の猶予を持たせ、各チェックポイントを必ず1回は捕まえる。
-const CHALLENGE_REMINDER_CHECKPOINTS: ReadonlyArray<[number, string]> = [
-    [3 * DAY_MS, "3日前"],
-    [1 * DAY_MS, "1日前"],
-];
+const CHALLENGE_REMINDER_DAYS: readonly number[] = [5, 3, 1];
+// 期間限定イベントは開催期間が長いので、早い段階からも通知する
+const EVENT_REMINDER_DAYS: readonly number[] = [20, 15, 10, 5, 3, 1];
 const CHALLENGE_REMINDER_MARGIN_MS = 26 * HOUR_MS;
 
 // genshin.py の実装に合わせた HoYoLAB(海外版)の DS 署名用ソルト
@@ -189,12 +188,16 @@ function buildWeeklyMessage(notes: ZZZNotes): string | null {
     );
 }
 
-function reminderCheckpoint(endTime: Date | null): { remainingMs: number; label: string } | null {
+function reminderCheckpoint(
+    endTime: Date | null,
+    days: readonly number[],
+): { remainingMs: number; label: string } | null {
     if (!endTime) return null;
     const remainingMs = endTime.getTime() - Date.now();
-    for (const [checkpoint, label] of CHALLENGE_REMINDER_CHECKPOINTS) {
+    for (const day of days) {
+        const checkpoint = day * DAY_MS;
         const lower = Math.max(checkpoint - CHALLENGE_REMINDER_MARGIN_MS, 0);
-        if (lower <= remainingMs && remainingMs <= checkpoint) return { remainingMs, label };
+        if (lower <= remainingMs && remainingMs <= checkpoint) return { remainingMs, label: `${day}日前` };
     }
     return null;
 }
@@ -206,7 +209,7 @@ function buildChallengeMessage(
     endTime: Date | null,
     attempted: boolean,
 ): string | null {
-    const checkpoint = reminderCheckpoint(endTime);
+    const checkpoint = reminderCheckpoint(endTime, CHALLENGE_REMINDER_DAYS);
     if (!checkpoint || !endTime) return null;
     if (attempted) {
         console.log(`${name}は今シーズン挑戦済み`);
@@ -257,7 +260,7 @@ async function buildEventMessage(client: HoyolabClient, uid: string): Promise<st
     for (const event of activity_list) {
         if (event.state !== "STATE_IN_PROGRESS" || event.monochrome_got_cnt >= event.monochrome_cnt) continue;
         const endTime = new Date(event.end_ts * 1000);
-        const checkpoint = reminderCheckpoint(endTime);
+        const checkpoint = reminderCheckpoint(endTime, EVENT_REMINDER_DAYS);
         if (!checkpoint) continue;
         lines.push(
             `・${event.name}: ${event.monochrome_got_cnt}/${event.monochrome_cnt}(終了${checkpoint.label}・あと${formatDuration(checkpoint.remainingMs)}・${formatJst(endTime)})`,
